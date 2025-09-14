@@ -9,6 +9,7 @@ langchain-community
 langchain-groq
 ddgs
 tavily-python
+langchain-tavily
 google-api-python-client
 serpapi
 streamlit-webrtc
