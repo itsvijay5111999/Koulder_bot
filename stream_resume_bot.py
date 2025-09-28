@@ -9,6 +9,8 @@ import json
 
 # ======================= Helper Functions =======================
 
+# def 
+
 def generate_thread_name_from_message(message):
     """Creates a short thread name from the first user message."""
     return message[:40] + "..." if len(message) > 40 else message
