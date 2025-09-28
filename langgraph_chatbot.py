@@ -47,7 +47,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 ddg_tool = DuckDuckGoSearchRun(description="A privacy-respecting search engine. Use this for general web searches.")
 
 
-
+#hi
 # # SerpAPI tool with logging
 def serpapi_with_logging(query: str) -> str:
     print(f"[LOG] Running SerpAPI Search with query: {query}")
