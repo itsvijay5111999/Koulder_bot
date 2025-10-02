@@ -1,15 +1,14 @@
 import streamlit as st
-from langgraph_chatbot import chatbot, retrieve_all_threads
+from langgraph_chatbot import chatbot, retrieve_all_threads, generate_stability_image
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
+import base64
 
 # ======================= Helper Functions =======================
-
-# def 
 
 def generate_thread_name_from_message(message):
     """Creates a short thread name from the first user message."""
@@ -54,6 +53,16 @@ def format_conversation_for_email(messages):
                 formatted_lines.append(f"Title: {video.get('title')}\nLink: {video.get('link')}\n")
     return "\n\n".join(formatted_lines)
 
+# ======================= Image Generation Functions =======================
+
+def display_generated_image(image_data, prompt=""):
+    """Decodes and displays a Base64 encoded image."""
+    try:
+        image_bytes = base64.b64decode(image_data)
+        st.image(image_bytes, caption=f"Generated: \"{prompt}\"" if prompt else "", use_column_width=True)
+    except Exception as e:
+        st.error(f"Failed to display image: {e}")
+
 # ======================= Optimized Thread Switching =======================
 
 def switch_thread(thread_id):
@@ -63,10 +72,10 @@ def switch_thread(thread_id):
     st.session_state["thread_id"] = thread_id
     st.session_state.editing_thread_id = None
     
+    # Clear cache for this thread to force fresh load from database
     if thread_id in st.session_state.thread_histories:
-        st.session_state.messages = st.session_state.thread_histories[thread_id]
-        return
-
+        del st.session_state.thread_histories[thread_id]
+    
     try:
         state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
         db_messages = state.values.get("messages", [])
@@ -130,38 +139,33 @@ def display_youtube_thumbnails(videos):
                 unsafe_allow_html=True
             )
 
-# ======================= Corrected Session State Initialization ===================
+# ======================= Session State Initialization ===================
 
-# This block runs only ONCE when the app starts or the session is new.
+# Initialize view mode if not present
+if "view_mode" not in st.session_state:
+    st.session_state.view_mode = "chat"  # "chat" or "image_gen"
+
 if "thread_id" not in st.session_state:
     st.session_state.editing_thread_id = None
     st.session_state.messages = []
-    # Initialize the history cache here
     st.session_state.thread_histories = {} 
     
     try:
-        # 1. Fetch all persisted thread IDs from the database.
-        persisted_threads = retrieve_all_threads()
+        persisted_threads = [item[0] for item in retrieve_all_threads()]
         
-        # 2. If threads exist, populate the chat_threads dictionary.
         if persisted_threads:
             st.session_state.chat_threads = {tid: f"Chat {str(tid)[:8]}..." for tid in persisted_threads}
-            # 3. Set the current thread to the most recent one.
             st.session_state.thread_id = persisted_threads[-1] 
-            # 4. Immediately load the history for the most recent thread.
             switch_thread(st.session_state.thread_id)
         else:
-            # 5. If no threads exist, create a fresh "New Chat".
             new_thread_id = str(uuid.uuid4())
             st.session_state.thread_id = new_thread_id
             st.session_state.chat_threads = {new_thread_id: "New Chat"}
             st.session_state.thread_histories = {new_thread_id: []}
 
     except Exception as e:
-        # Fallback if the database connection fails on startup.
         st.sidebar.error("Could not retrieve past conversations.")
         st.error(f"Database connection error: {e}")
-        # Create a single temporary chat session.
         new_thread_id = str(uuid.uuid4())
         st.session_state.thread_id = new_thread_id
         st.session_state.chat_threads = {new_thread_id: "New Chat"}
@@ -170,6 +174,19 @@ if "thread_id" not in st.session_state:
 
 with st.sidebar:
     st.title("Koulder Chatbot")
+    
+    # View mode switcher buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💬 Chat", use_container_width=True, type="primary" if st.session_state.view_mode == "chat" else "secondary"):
+            st.session_state.view_mode = "chat"
+            st.rerun()
+    with col2:
+        if st.button("🎨 Images", use_container_width=True, type="primary" if st.session_state.view_mode == "image_gen" else "secondary"):
+            st.session_state.view_mode = "image_gen"
+            st.rerun()
+    
+    st.divider()
     
     if st.button("➕ New Chat", use_container_width=True):
         reset_chat()
@@ -223,63 +240,176 @@ with st.sidebar:
                     st.session_state.editing_thread_id = thread_id
                     st.rerun()
 
-# ============================ Main Chat UI ============================
+# ============================ Main UI - Conditional Display ============================
 
-# Display historical messages
-if "messages" in st.session_state:
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            if msg.get("display_type") == "youtube_videos":
-                display_youtube_thumbnails(msg["content"])
-            else:
-                st.markdown(msg.get("content", ""))
+if st.session_state.view_mode == "chat":
+    # ============================ CHAT VIEW ============================
+    
+    # Display historical messages
+    if "messages" in st.session_state:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                if msg.get("display_type") == "youtube_videos":
+                    display_youtube_thumbnails(msg["content"])
+                else:
+                    st.markdown(msg.get("content", ""))
 
-# Handle new user input
-if user_input := st.chat_input("Ask me anything..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    with st.chat_message("assistant"):
-        youtube_display_placeholder = st.empty()
-        final_text_placeholder = st.empty()
+    # Handle new user input
+    if user_input := st.chat_input("Ask me anything..."):
+        # Don't manually append to messages - let LangGraph handle it
+        # st.session_state.messages.append({"role": "user", "content": user_input})
         
-        with st.spinner("Thinking..."):
-            CONFIG = {"configurable": {"thread_id": st.session_state.thread_id}}
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            youtube_display_placeholder = st.empty()
+            final_text_placeholder = st.empty()
             
-            youtube_videos_found = []
-            final_text_content = ""
+            with st.spinner("Thinking..."):
+                CONFIG = {"configurable": {"thread_id": st.session_state.thread_id}}
+                
+                youtube_videos_found = []
+                final_text_content = ""
 
-            for chunk in chatbot.stream({"messages": [HumanMessage(content=user_input)]}, config=CONFIG, stream_mode="values"):
-                last_message = chunk.get("messages", [])[-1] if chunk.get("messages") else None
-                if not last_message:
-                    continue
+                # Stream through the chatbot
+                for chunk in chatbot.stream({"messages": [HumanMessage(content=user_input)]}, config=CONFIG, stream_mode="values"):
+                    last_message = chunk.get("messages", [])[-1] if chunk.get("messages") else None
+                    if not last_message:
+                        continue
 
-                if isinstance(last_message, ToolMessage) and last_message.name == "search_youtube_videos":
-                    try:
-                        results = json.loads(last_message.content)
-                        if isinstance(results, list):
-                            youtube_videos_found = results
-                            with youtube_display_placeholder.container():
-                                display_youtube_thumbnails(youtube_videos_found)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                    if isinstance(last_message, ToolMessage) and last_message.name == "search_youtube_videos":
+                        try:
+                            results = json.loads(last_message.content)
+                            if isinstance(results, list):
+                                youtube_videos_found = results
+                                with youtube_display_placeholder.container():
+                                    display_youtube_thumbnails(youtube_videos_found)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-                elif isinstance(last_message, AIMessage) and last_message.content:
-                    final_text_content = last_message.content
-                    final_text_placeholder.markdown(final_text_content)
+                    elif isinstance(last_message, AIMessage) and last_message.content:
+                        final_text_content = last_message.content
+                        final_text_placeholder.markdown(final_text_content)
 
-            if youtube_videos_found:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": youtube_videos_found,
-                    "display_type": "youtube_videos"
-                })
-            
-            if final_text_content:
-                 st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": final_text_content
-                })
+                # After streaming completes, reload from database to get the complete, persisted state
+                try:
+                    state = chatbot.get_state(config=CONFIG)
+                    db_messages = state.values.get("messages", [])
+                    
+                    ui_messages = []
+                    for msg in db_messages:
+                        if isinstance(msg, HumanMessage):
+                            ui_messages.append({"role": "user", "content": msg.content})
+                        elif isinstance(msg, ToolMessage) and msg.name == "search_youtube_videos":
+                            try:
+                                video_content = json.loads(msg.content)
+                                if isinstance(video_content, list):
+                                    ui_messages.append({
+                                        "role": "assistant",
+                                        "content": video_content,
+                                        "display_type": "youtube_videos"
+                                    })
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                        elif isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+                            ui_messages.append({"role": "assistant", "content": msg.content})
+                    
+                    # Update both session state locations
+                    st.session_state.messages = ui_messages
+                    st.session_state.thread_histories[st.session_state.thread_id] = ui_messages
+                    
+                except Exception as e:
+                    st.error(f"Error reloading messages: {e}")
 
-            st.session_state.thread_histories[st.session_state.thread_id] = st.session_state.messages
+else:
+    # ============================ IMAGE GENERATION VIEW ============================
+    
+    st.title("🎨 AI Image Generator")
+    st.write("Create stunning AI-generated images from text descriptions!")
+    
+    st.divider()
+    
+    # Image generation form
+    with st.form("image_generation_form", clear_on_submit=False):
+        image_prompt = st.text_area(
+            "Describe the image you want to generate:",
+            placeholder="Example: A serene mountain landscape at sunset with a crystal clear lake reflection, photorealistic, 4K",
+            height=120,
+            help="Be descriptive! The more details you provide, the better the result."
+        )
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            generate_button = st.form_submit_button("✨ Generate Image", use_container_width=True, type="primary")
+        with col2:
+            clear_button = st.form_submit_button("🗑️ Clear All", use_container_width=True)
+        with col3:
+            back_button = st.form_submit_button("⬅️ Back to Chat", use_container_width=True)
+    
+    if back_button:
+        st.session_state.view_mode = "chat"
+        st.rerun()
+    
+    if clear_button:
+        if "generated_images" in st.session_state:
+            del st.session_state.generated_images
+        st.rerun()
+    
+    if generate_button:
+        if image_prompt:
+            with st.spinner("🎨 Creating your masterpiece... This may take a few seconds."):
+                try:
+                    response_json = generate_stability_image(image_prompt)
+                    response_data = json.loads(response_json)
+                    
+                    if "image_data" in response_data:
+                        # Store generated image in session state
+                        if "generated_images" not in st.session_state:
+                            st.session_state.generated_images = []
+                        
+                        st.session_state.generated_images.append({
+                            "prompt": image_prompt,
+                            "image_data": response_data["image_data"],
+                            "format": response_data.get("format", "png")
+                        })
+                        st.success("✅ Image generated successfully!")
+                        st.rerun()
+                    elif "error" in response_data:
+                        st.error(f"❌ Image generation failed: {response_data['error']}")
+                except Exception as e:
+                    st.error(f"❌ An error occurred: {str(e)}")
+        else:
+            st.warning("⚠️ Please enter a description for the image you want to generate.")
+    
+    # Display generated images
+    if "generated_images" in st.session_state and st.session_state.generated_images:
+        st.divider()
+        st.subheader(f"📸 Your Generated Images ({len(st.session_state.generated_images)})")
+        
+        for idx, img_data in enumerate(reversed(st.session_state.generated_images)):
+            with st.container():
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.markdown(f"**Prompt:** {img_data['prompt']}")
+                with col2:
+                    st.markdown(f"*Image #{len(st.session_state.generated_images) - idx}*")
+                
+                display_generated_image(img_data["image_data"])
+                
+                # Download button for each image
+                col_a, col_b, col_c = st.columns([2, 2, 2])
+                with col_a:
+                    st.download_button(
+                        label="⬇️ Download Image",
+                        data=base64.b64decode(img_data["image_data"]),
+                        file_name=f"ai_generated_{len(st.session_state.generated_images) - idx}.{img_data.get('format', 'png')}",
+                        mime=f"image/{img_data.get('format', 'png')}",
+                        key=f"download_{idx}",
+                        use_container_width=True
+                    )
+                
+                if idx < len(st.session_state.generated_images) - 1:
+                    st.divider()
+    else:
+        st.info("💡 No images generated yet. Enter a prompt above to get started!")
