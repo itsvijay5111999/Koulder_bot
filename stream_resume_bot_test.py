@@ -84,7 +84,7 @@ def log_error(message: str, logfile: str = "error_log.txt"):
         f.write(f"[{timestamp}] {message}\n")
 
 # Load your error animation from GitHub raw link
-error_lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/refs/heads/main/yjxBJXnTsi.json"
+error_lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi.json"
 error_lottie = load_lottieurl(error_lottie_url)
 
 
