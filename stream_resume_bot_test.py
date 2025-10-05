@@ -7,6 +7,65 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import base64
+import streamlit as st
+from streamlit_lottie import st_lottie
+import json
+
+#=================================message box===========================
+
+import streamlit as st
+
+if st.button("🚀 See What's Coming!", use_container_width=True):
+    st.info("""
+    **✨ MCP Server: Coming Soon! ✨**
+    - Email Access
+    - Chat History Access
+    - And much more!
+    *Stay tuned for exciting updates!*
+    """)
+
+
+
+#==============================================================
+
+def load_lottiefile(filepath: str, encoding="utf-8"):
+    with open(filepath, "r", encoding=encoding) as f:
+        return json.load(f)
+
+lottie_json = load_lottiefile("4hMtG8PCKS.json")
+  # Replace with your Lottie file path
+
+# Create a container and center content using HTML flexbox
+st.markdown("""
+    <div style='display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 28px; margin-bottom: 24px;'>
+        <div id='lottie-animation'>
+""", unsafe_allow_html=True)
+
+st_lottie(lottie_json, speed=1, loop=True, quality="high", height=200, width=200)
+
+st.markdown("""
+        </div>
+        <div style='height:18px;'></div>
+        <h2 style='text-align:center; margin-bottom:0;'>How can I help you today?</h2>
+    </div>
+""", unsafe_allow_html=True)
+
+#==============================error lottie=====================
+
+import datetime
+def load_lottiefile(filepath: str):
+    with open(filepath, "r") as f:
+        return json.load(f)
+
+# def log_error(message: str, logfile: str = "error_log.txt"):
+#     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#     with open(logfile, "a") as f:
+#         f.write(f"[{timestamp}] {message}\n")
+
+# Load your error animation once
+error_lottie = load_lottiefile("yjxBJXnTsi.json")  # Use your error animation JSON
+
+
 
 # ======================= Helper Functions =======================
 
@@ -102,7 +161,8 @@ def switch_thread(thread_id):
         st.session_state.messages = ui_messages
 
     except Exception as e:
-        st.error(f"Could not retrieve conversation history: {e}")
+        # st.error(f"Could not retrieve conversation history: {e}")
+        st.error(f" conversation history is disabled: {e}")
         st.session_state.messages = []
 
 def reset_chat():
@@ -165,7 +225,7 @@ if "thread_id" not in st.session_state:
 
     except Exception as e:
         st.sidebar.error("Could not retrieve past conversations.")
-        st.error(f"Database connection error: {e}")
+        st.error(f"Database disabled: {e}")
         new_thread_id = str(uuid.uuid4())
         st.session_state.thread_id = new_thread_id
         st.session_state.chat_threads = {new_thread_id: "New Chat"}
@@ -320,7 +380,11 @@ if st.session_state.view_mode == "chat":
                     st.session_state.thread_histories[st.session_state.thread_id] = ui_messages
                     
                 except Exception as e:
-                    st.error(f"Error reloading messages: {e}")
+                    # st.error(f"Error reloading messages: {e}")
+                    st_lottie(error_lottie, speed=1, loop=True, quality="high", height=180, width=180)
+                    st.error("Oops! Something went wrong. Please try again.")
+                    # log_error(f"Chatbot error: {str(e)}")
+                    
 
 else:
     # ============================ IMAGE GENERATION VIEW ============================
@@ -376,9 +440,15 @@ else:
                         st.success("✅ Image generated successfully!")
                         st.rerun()
                     elif "error" in response_data:
-                        st.error(f"❌ Image generation failed: {response_data['error']}")
+                        # st.error(f"❌ Image generation failed: {response_data['error']}")
+                        st_lottie(error_lottie, speed=1, loop=True, quality="high", height=180, width=180)
+                        st.error("Oops! Something went wrong. Please try again.")
+                        # log_error(f"Chatbot error: {str(e)}")
                 except Exception as e:
-                    st.error(f"❌ An error occurred: {str(e)}")
+                    # st.error(f"❌ An error occurred: {str(e)}")
+                    st_lottie(error_lottie, speed=1, loop=True, quality="high", height=180, width=180)
+                    st.error("Oops! Something went wrong. Please try again.")
+                    # log_error(f"Chatbot error: {str(e)}")
         else:
             st.warning("⚠️ Please enter a description for the image you want to generate.")
     
