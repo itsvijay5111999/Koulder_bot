@@ -7,14 +7,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import base64
-import streamlit as st
 from streamlit_lottie import st_lottie
-import json
+
 
 #=================================message box===========================
-
-import streamlit as st
-
 if st.button("🚀 See What's Coming!", use_container_width=True):
     st.info("""
     **✨ MCP Server: Coming Soon! ✨**
@@ -27,9 +23,11 @@ if st.button("🚀 See What's Coming!", use_container_width=True):
 
 
 #==============================================================
+import streamlit as st
 from streamlit_lottie import st_lottie
 import requests
 import json
+import datetime
 
 # Function to load Lottie from URL
 def load_lottieurl(url: str):
@@ -40,9 +38,18 @@ def load_lottieurl(url: str):
         st.error("Failed to load Lottie JSON from URL")
         return None
 
-# RAW GitHub URL to your Lottie JSON (make sure it's the actual Raw link, should NOT contain ?token=... query parameter for public files)
-lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS.json"
-lottie_json = load_lottieurl(lottie_url)
+# Get current Streamlit theme mode
+theme = st.get_option("theme.base")  # 'dark' or 'light'
+
+# Lottie URLs for dark and light mode (update with actual URLs to your JSONs)
+lottie_url_light = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS.json"   # dark animation for light mode UI
+lottie_url_dark = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS_dark.json"  # light animation for dark mode UI (you need to create this variant)
+
+# Load appropriate animation based on theme
+if theme == "dark":
+    lottie_json = load_lottieurl(lottie_url_dark)
+else:
+    lottie_json = load_lottieurl(lottie_url_light)
 
 # Centered container for animation and title
 st.markdown("""
@@ -61,31 +68,23 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-#==============================error lottie=====================
-import datetime
-import requests
-import streamlit as st
-from streamlit_lottie import st_lottie
-import json
-
-# Load Lottie animation from raw URL
-def load_lottieurl(url: str):
-    r = requests.get(url)
-    if r.status_code == 200:
-        return r.json()
-    else:
-        st.error("Failed to load Lottie JSON from URL")
-        return None
-
+# ============================== error lottie =====================
 # Error logging function
 def log_error(message: str, logfile: str = "error_log.txt"):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(logfile, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
 
-# Load your error animation from GitHub raw link
-error_lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi.json"
-error_lottie = load_lottieurl(error_lottie_url)
+# URLs for error animation variants (add a light and a dark version for error animation)
+error_lottie_url_light = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi.json"
+error_lottie_url_dark = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi_dark.json"
+
+# Load error animation based on theme
+if theme == "dark":
+    error_lottie = load_lottieurl(error_lottie_url_dark)
+else:
+    error_lottie = load_lottieurl(error_lottie_url_light)
+
 
 
 # ======================= Helper Functions =======================
