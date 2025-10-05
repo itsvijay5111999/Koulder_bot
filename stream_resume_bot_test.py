@@ -22,12 +22,12 @@ if st.button("🚀 See What's Coming!", use_container_width=True):
 
 
 
-#==============================================================
 import streamlit as st
 from streamlit_lottie import st_lottie
 import requests
 import json
 import datetime
+
 
 # Function to load Lottie from URL
 def load_lottieurl(url: str):
@@ -38,12 +38,15 @@ def load_lottieurl(url: str):
         st.error("Failed to load Lottie JSON from URL")
         return None
 
+
 # Get current Streamlit theme mode
 theme = st.get_option("theme.base")  # 'dark' or 'light'
 
-# Lottie URLs for dark and light mode (update with actual URLs to your JSONs)
-lottie_url_light = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS.json"   # dark animation for light mode UI
-lottie_url_dark = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS_dark.json"  # light animation for dark mode UI (you need to create this variant)
+
+# Updated Lottie URLs for light and dark mode animations
+lottie_url_light = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS.json"   # Light mode animation
+lottie_url_dark = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/IN1fENTh2z.json"     # Dark mode animation
+
 
 # Load appropriate animation based on theme
 if theme == "dark":
@@ -51,14 +54,17 @@ if theme == "dark":
 else:
     lottie_json = load_lottieurl(lottie_url_light)
 
+
 # Centered container for animation and title
 st.markdown("""
     <div style='display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 28px; margin-bottom: 24px;'>
         <div id='lottie-animation'>
 """, unsafe_allow_html=True)
 
+
 if lottie_json:
     st_lottie(lottie_json, speed=1, loop=True, quality="high", height=200, width=200)
+
 
 st.markdown("""
         </div>
@@ -75,15 +81,18 @@ def log_error(message: str, logfile: str = "error_log.txt"):
     with open(logfile, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
 
+
 # URLs for error animation variants (add a light and a dark version for error animation)
 error_lottie_url_light = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi.json"
 error_lottie_url_dark = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/yjxBJXnTsi_dark.json"
+
 
 # Load error animation based on theme
 if theme == "dark":
     error_lottie = load_lottieurl(error_lottie_url_dark)
 else:
     error_lottie = load_lottieurl(error_lottie_url_light)
+
 
 
 
