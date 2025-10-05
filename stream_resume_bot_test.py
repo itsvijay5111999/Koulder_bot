@@ -27,21 +27,31 @@ if st.button("🚀 See What's Coming!", use_container_width=True):
 
 
 #==============================================================
+from streamlit_lottie import st_lottie
+import requests
+import json
 
-def load_lottiefile(filepath: str, encoding="utf-8"):
-    with open(filepath, "r", encoding=encoding) as f:
-        return json.load(f)
+# Function to load Lottie from URL
+def load_lottieurl(url: str):
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    else:
+        st.error("Failed to load Lottie JSON from URL")
+        return None
 
-lottie_json = load_lottiefile("4hMtG8PCKS.json")
-  # Replace with your Lottie file path
+# RAW GitHub URL to your Lottie JSON (make sure it's the actual Raw link, should NOT contain ?token=... query parameter for public files)
+lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/main/4hMtG8PCKS.json"
+lottie_json = load_lottieurl(lottie_url)
 
-# Create a container and center content using HTML flexbox
+# Centered container for animation and title
 st.markdown("""
     <div style='display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 28px; margin-bottom: 24px;'>
         <div id='lottie-animation'>
 """, unsafe_allow_html=True)
 
-st_lottie(lottie_json, speed=1, loop=True, quality="high", height=200, width=200)
+if lottie_json:
+    st_lottie(lottie_json, speed=1, loop=True, quality="high", height=200, width=200)
 
 st.markdown("""
         </div>
@@ -50,21 +60,32 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+
 #==============================error lottie=====================
-
 import datetime
-def load_lottiefile(filepath: str):
-    with open(filepath, "r") as f:
-        return json.load(f)
+import requests
+import streamlit as st
+from streamlit_lottie import st_lottie
+import json
 
-# def log_error(message: str, logfile: str = "error_log.txt"):
-#     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-#     with open(logfile, "a") as f:
-#         f.write(f"[{timestamp}] {message}\n")
+# Load Lottie animation from raw URL
+def load_lottieurl(url: str):
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    else:
+        st.error("Failed to load Lottie JSON from URL")
+        return None
 
-# Load your error animation once
-error_lottie = load_lottiefile("yjxBJXnTsi.json")  # Use your error animation JSON
+# Error logging function
+def log_error(message: str, logfile: str = "error_log.txt"):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(logfile, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
 
+# Load your error animation from GitHub raw link
+error_lottie_url = "https://raw.githubusercontent.com/itsvijay5111999/Agentic_bot/refs/heads/main/yjxBJXnTsi.json"
+error_lottie = load_lottieurl(error_lottie_url)
 
 
 # ======================= Helper Functions =======================
