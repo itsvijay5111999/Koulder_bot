@@ -10,8 +10,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_community.tools import DuckDuckGoSearchRun
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from langchain_core.tools import tool
-from langchain.agents import Tool
+from langchain_core.tools import tool, Tool  # FIXED: Added Tool here, removed old import
 from dotenv import load_dotenv
 import base64
 import sqlite3
@@ -28,28 +27,26 @@ if not SERPAPI_API_KEY:
     raise ValueError("SERPAPI_API_KEY not set in environment")
 
 
-# # Initialize SerpAPI wrapper
+# Initialize SerpAPI wrapper
 serpapi_instance = SerpAPIWrapper(serpapi_api_key=SERPAPI_API_KEY)
 
-# # -------------------
-# # 2. Initialize LLM
-# # -------------------
+# -------------------
+# 2. Initialize LLM
+# -------------------
 model = ChatGroq(
-    model_name="meta-llama/llama-4-scout-17b-16e-instruct", # Switched to a more common and powerful model
+    model_name="meta-llama/llama-4-scout-17b-16e-instruct",
     temperature=0.5,
     max_tokens=1000
 )
 
 
-
 from langchain_community.tools import DuckDuckGoSearchRun
 
-# # Initialize the tool directly. LangChain will handle the argument mapping.
+# Initialize the tool directly. LangChain will handle the argument mapping.
 ddg_tool = DuckDuckGoSearchRun(description="A privacy-respecting search engine. Use this for general web searches.")
 
 
-#hi
-# # SerpAPI tool with logging
+# SerpAPI tool with logging
 def serpapi_with_logging(query: str) -> str:
     print(f"[LOG] Running SerpAPI Search with query: {query}")
     return serpapi_instance.run(query)
@@ -62,7 +59,7 @@ serpapi_tool = Tool(
 )
 
 
-# # Tavily tool with logging
+# Tavily tool with logging
 tavily_tool = TavilySearch(
     max_results=5,
     include_images=True,
@@ -162,7 +159,7 @@ def generate_stability_image(prompt: str, negative_prompt: str = "blurry, low qu
         return json.dumps({"error": f"An API request error occurred: {e}"})
 
 
-# # Calculator tool
+# Calculator tool
 @tool
 def calculator(first_num: float, second_num: float, operation: str) -> dict:
     """Perform basic arithmetic operations: add, sub, mul, div"""
@@ -184,50 +181,41 @@ def calculator(first_num: float, second_num: float, operation: str) -> dict:
         return {"error": str(e)}
 
 
-# # Stock price tool
+# Stock price tool
 @tool
 def get_stock_price(symbol: str) -> dict:
     """Fetch latest stock price for a given symbol using Alpha Vantage API"""
-    # NOTE: You need to get your own free API key from Alpha Vantage
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "demo") 
     url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
     r = requests.get(url)
     return r.json()
 
 
-# # -------------------
-# # 4. Bind tools to LLM
-# # -------------------
+# -------------------
+# 4. Bind tools to LLM
+# -------------------
 tools = [tavily_tool, search_youtube_videos, generate_stability_image, serpapi_tool, get_stock_price, calculator]
 llm_with_tools = model.bind_tools(tools)
 
 
-# # -------------------
-# # 5. Chat graph setup
-# # -------------------
+# -------------------
+# 5. Chat graph setup
+# -------------------
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-# # ===== THIS IS THE CORRECTED CHAT NODE =====
 def chat_node(state: ChatState) -> dict:
     """
     This node invokes the LLM with the current state of messages and returns the AI's response.
     It ensures the response is properly formatted for serialization.
     """
     response = llm_with_tools.invoke(state["messages"])
-    
-    # The AIMessage from the LLM is already in a serializable format if it contains
-    # tool_calls. We just need to ensure it is added to the state.
-    # The 'add_messages' function in the state handles this correctly.
-    
     return {"messages": [response]}
 
 tool_node = ToolNode(tools)
 
-# # Use an in-memory checkpointer for simplicity, or keep your SQLite one
-# # For production, SqliteSaver is great. For quick testing, memory is easier.
-# memory = SqliteSaver.from_conn_string(":memory:")
+# SQLite checkpointer for persistence
 conn = sqlite3.connect(database='chatbot.db3', check_same_thread=False)
 checkpointer = SqliteSaver(conn=conn)
 
@@ -245,12 +233,11 @@ graph.add_edge('tools', 'chat_node')
 chatbot = graph.compile(checkpointer=checkpointer)
 
 
-# # -------------------
-# # 6. Helper to list threads
-# # -------------------
+# -------------------
+# 6. Helper to list threads
+# -------------------
 def retrieve_all_threads():
     all_threads = set()
-    # Check if conn is not None before using it
     if conn:
         cursor = conn.cursor()
         cursor.execute("SELECT thread_id FROM checkpoints")
@@ -266,6 +253,5 @@ def get_latest_news():
     response = requests.get(url)
     if response.status_code == 200:
         articles = response.json().get("articles", [])
-        # Return list of dicts with title and url
         return [(a["title"], a["url"]) for a in articles[:10]]
     return []
