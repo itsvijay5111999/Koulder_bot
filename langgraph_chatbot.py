@@ -259,3 +259,13 @@ def retrieve_all_threads():
             all_threads.add(row)
     return list(all_threads)
 
+
+def get_latest_news():
+    api_key = "Ya5b4563c7e4244508c554840b6186921"
+    url = f"https://newsapi.org/v2/top-headlines?country=us&apiKey={api_key}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        articles = response.json().get("articles", [])
+        # Return list of dicts with title and url
+        return [(a["title"], a["url"]) for a in articles[:10]]
+    return []
