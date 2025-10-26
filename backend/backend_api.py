@@ -19,7 +19,7 @@ load_dotenv()
 
 # Import your backend modules
 from langgraph_chatbot import chatbot, retrieve_all_threads, generate_stability_image
-from backend_rag_test import ResearchPaperRAGPinecone
+from backend_rag import ResearchPaperRAGPinecone
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # Initialize FastAPI app
