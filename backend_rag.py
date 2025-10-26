@@ -1,6 +1,6 @@
 """
 RAG Knowledge Base for Research Papers
-Stores and retrieves research papers using ChromaDB and Groq LLM
+Stores and retrieves research papers using Pinecone and Groq LLM
 """
 
 import os
@@ -10,47 +10,96 @@ import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 from typing import List, Dict, Optional
+import hashlib
 
-# Vector DB and Embeddings
-import chromadb
-from chromadb.utils import embedding_functions
+# Pinecone for Vector DB
+from pinecone import Pinecone, ServerlessSpec
+
+# Sentence Transformers for embeddings
+from sentence_transformers import SentenceTransformer
 
 # Groq for LLM
 from groq import Groq
 
 # Configuration
-CHROMA_DB_PATH = "./chroma_papers_db"
-COLLECTION_NAME = "research_papers"
-GROQ_MODEL = "llama-3.3-70b-versatile"  # or "mixtral-8x7b-32768", "llama3-70b-8192"
+PINECONE_INDEX_NAME = "research-papers"
+PINECONE_DIMENSION = 384  # all-MiniLM-L6-v2 dimension
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
-class ResearchPaperRAG:
-    """RAG system for research papers using ChromaDB and Groq"""
+class ResearchPaperRAGPinecone:
+    """RAG system for research papers using Pinecone and Groq"""
     
-    def __init__(self, groq_api_key: str):
-        """Initialize the RAG system"""
+    def __init__(self, groq_api_key: str, pinecone_api_key: str, pinecone_environment: str = "us-east-1"):
+        """
+        Initialize the RAG system with Pinecone
+        
+        Args:
+            groq_api_key: Groq API key for LLM
+            pinecone_api_key: Pinecone API key
+            pinecone_environment: Pinecone environment (e.g., 'us-east-1')
+        """
         self.groq_api_key = groq_api_key
         self.groq_client = Groq(api_key=groq_api_key)
         
-        # Initialize ChromaDB
-        self.chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        # Initialize Pinecone
+        self.pc = Pinecone(api_key=pinecone_api_key)
         
-        # Use default embedding function (all-MiniLM-L6-v2)
-        self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+        # Initialize embedding model (same as ChromaDB default)
+        print("Loading embedding model...")
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        print("✅ Embedding model loaded")
         
-        # Get or create collection
+        # Create or connect to index
+        self._setup_index(pinecone_environment)
+    
+    def _setup_index(self, environment: str):
+        """Create or connect to Pinecone index"""
         try:
-            self.collection = self.chroma_client.get_collection(
-                name=COLLECTION_NAME,
-                embedding_function=self.embedding_function
-            )
-            print(f"✅ Loaded existing collection with {self.collection.count()} papers")
-        except:
-            self.collection = self.chroma_client.create_collection(
-                name=COLLECTION_NAME,
-                embedding_function=self.embedding_function,
-                metadata={"description": "AI/ML Research Papers from arXiv"}
-            )
-            print("✅ Created new collection")
+            # Check if index exists
+            existing_indexes = self.pc.list_indexes()
+            index_names = [idx['name'] for idx in existing_indexes]
+            
+            if PINECONE_INDEX_NAME not in index_names:
+                print(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
+                
+                # Create index with serverless spec (free tier)
+                self.pc.create_index(
+                    name=PINECONE_INDEX_NAME,
+                    dimension=PINECONE_DIMENSION,
+                    metric='cosine',
+                    spec=ServerlessSpec(
+                        cloud='aws',
+                        region=environment
+                    )
+                )
+                print(f"✅ Created new index: {PINECONE_INDEX_NAME}")
+            else:
+                print(f"✅ Connected to existing index: {PINECONE_INDEX_NAME}")
+            
+            # Connect to index
+            self.index = self.pc.Index(PINECONE_INDEX_NAME)
+            
+            # Get stats
+            stats = self.index.describe_index_stats()
+            print(f"✅ Index has {stats['total_vector_count']} vectors")
+            
+        except Exception as e:
+            print(f"Error setting up Pinecone index: {e}")
+            raise
+    
+    def _generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for text using sentence transformers"""
+        embedding = self.embedding_model.encode(text, convert_to_tensor=False)
+        return embedding.tolist()
+    
+    def _create_paper_id(self, paper: Dict) -> str:
+        """Create a unique ID for a paper"""
+        # Use arxiv_id if available, otherwise hash the title
+        if paper.get('id'):
+            return f"paper_{paper['id']}"
+        else:
+            title_hash = hashlib.md5(paper['title'].encode()).hexdigest()
+            return f"paper_{title_hash}"
     
     def fetch_arxiv_papers(self, category: str = "cs.AI", max_results: int = 50) -> List[Dict]:
         """Fetch papers from arXiv API"""
@@ -83,6 +132,7 @@ class ResearchPaperRAG:
                         'published': entry.find('{http://www.w3.org/2005/Atom}published').text,
                         'categories': [],
                         'arxiv_url': entry.find('{http://www.w3.org/2005/Atom}id').text,
+                        'source': 'arXiv'
                     }
                     
                     # Get categories
@@ -96,23 +146,56 @@ class ResearchPaperRAG:
             print(f"Error fetching papers: {e}")
             return []
     
+    def fetch_huggingface_papers(self, max_results: int = 50) -> List[Dict]:
+        """Fetch curated papers from Hugging Face Daily Papers"""
+        try:
+            url = "https://huggingface.co/api/daily_papers"
+            response = requests.get(url, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                papers = []
+                for item in data[:max_results]:
+                    arxiv_id = item.get('paper', {}).get('arxivId', '')
+                    paper = {
+                        'id': arxiv_id,
+                        'title': item.get('paper', {}).get('title', 'No Title'),
+                        'summary': item.get('paper', {}).get('summary', 'No summary available.'),
+                        'authors': [author.get('name', '') for author in item.get('paper', {}).get('authors', [])],
+                        'published': item.get('publishedAt', ''),
+                        'arxiv_url': f"https://arxiv.org/abs/{arxiv_id}",
+                        'categories': ['AI/ML', 'Trending'],
+                        'source': 'HuggingFace',
+                        'upvotes': item.get('paper', {}).get('upvotes', 0)
+                    }
+                    papers.append(paper)
+                
+                print(f"✅ Fetched {len(papers)} papers from Hugging Face")
+                return papers
+            else:
+                print(f"Error fetching HF papers: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            print(f"Error fetching Hugging Face papers: {e}")
+            return []
+    
     def add_papers_to_db(self, papers: List[Dict]) -> int:
-        """Add papers to ChromaDB"""
+        """Add papers to Pinecone"""
         if not papers:
             return 0
         
-        # Prepare data for ChromaDB
-        ids = []
-        documents = []
-        metadatas = []
+        vectors_to_upsert = []
+        added_count = 0
         
         for paper in papers:
-            paper_id = paper['id']
+            paper_id = self._create_paper_id(paper)
             
             # Check if paper already exists
             try:
-                existing = self.collection.get(ids=[paper_id])
-                if existing['ids']:
+                existing = self.index.fetch(ids=[paper_id])
+                if existing['vectors']:
                     continue  # Skip if already exists
             except:
                 pass
@@ -120,40 +203,54 @@ class ResearchPaperRAG:
             # Create document text (title + summary for better retrieval)
             doc_text = f"Title: {paper['title']}\n\nAbstract: {paper['summary']}"
             
-            # Metadata
+            # Generate embedding
+            embedding = self._generate_embedding(doc_text)
+            
+            # Prepare metadata (Pinecone has metadata size limits)
             metadata = {
-                'title': paper['title'][:500],  # Limit length
-                'authors': ', '.join(paper['authors'][:5]),
+                'title': paper['title'][:500],
+                'authors': ', '.join(paper['authors'][:5])[:500],
                 'published': paper['published'][:10],
-                'categories': ', '.join(paper['categories']),
-                'arxiv_url': paper['arxiv_url'],
-                'added_date': datetime.datetime.now().strftime("%Y-%m-%d")
+                'categories': ', '.join(paper['categories'])[:200],
+                'arxiv_url': paper['arxiv_url'][:500],
+                'source': paper.get('source', 'arXiv'),
+                'added_date': datetime.datetime.now().strftime("%Y-%m-%d"),
+                'full_text': doc_text[:1000]  # Store snippet for retrieval
             }
             
-            ids.append(paper_id)
-            documents.append(doc_text)
-            metadatas.append(metadata)
+            vectors_to_upsert.append({
+                'id': paper_id,
+                'values': embedding,
+                'metadata': metadata
+            })
+            added_count += 1
         
-        if ids:
-            self.collection.add(
-                ids=ids,
-                documents=documents,
-                metadatas=metadatas
-            )
-            print(f"✅ Added {len(ids)} new papers to database")
-            return len(ids)
+        # Upsert in batches of 100 (Pinecone limit)
+        if vectors_to_upsert:
+            batch_size = 100
+            for i in range(0, len(vectors_to_upsert), batch_size):
+                batch = vectors_to_upsert[i:i+batch_size]
+                self.index.upsert(vectors=batch)
+            
+            print(f"✅ Added {added_count} new papers to Pinecone")
+            return added_count
         
         return 0
     
     def search_papers(self, query: str, n_results: int = 5) -> Dict:
         """Search for relevant papers using semantic search"""
         try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=n_results
+            # Generate query embedding
+            query_embedding = self._generate_embedding(query)
+            
+            # Search in Pinecone
+            results = self.index.query(
+                vector=query_embedding,
+                top_k=n_results,
+                include_metadata=True
             )
             
-            if not results['ids'] or not results['ids'][0]:
+            if not results['matches']:
                 return {
                     'success': False,
                     'message': 'No relevant papers found',
@@ -161,16 +258,18 @@ class ResearchPaperRAG:
                 }
             
             papers = []
-            for i, paper_id in enumerate(results['ids'][0]):
+            for match in results['matches']:
+                metadata = match['metadata']
                 paper_data = {
-                    'id': paper_id,
-                    'title': results['metadatas'][0][i].get('title', 'Unknown'),
-                    'authors': results['metadatas'][0][i].get('authors', 'Unknown'),
-                    'published': results['metadatas'][0][i].get('published', 'Unknown'),
-                    'categories': results['metadatas'][0][i].get('categories', 'Unknown'),
-                    'arxiv_url': results['metadatas'][0][i].get('arxiv_url', '#'),
-                    'content': results['documents'][0][i],
-                    'distance': results['distances'][0][i] if 'distances' in results else None
+                    'id': match['id'],
+                    'title': metadata.get('title', 'Unknown'),
+                    'authors': metadata.get('authors', 'Unknown'),
+                    'published': metadata.get('published', 'Unknown'),
+                    'categories': metadata.get('categories', 'Unknown'),
+                    'arxiv_url': metadata.get('arxiv_url', '#'),
+                    'source': metadata.get('source', 'Unknown'),
+                    'content': metadata.get('full_text', ''),
+                    'score': match['score']
                 }
                 papers.append(paper_data)
             
@@ -209,7 +308,8 @@ class ResearchPaperRAG:
                 'title': paper['title'],
                 'authors': paper['authors'],
                 'url': paper['arxiv_url'],
-                'published': paper['published']
+                'published': paper['published'],
+                'source': paper.get('source', 'Unknown')
             })
         
         context = "\n---\n".join(context_parts)
@@ -266,27 +366,63 @@ Answer:"""
                 'sources': sources
             }
     
-    def update_daily_papers(self, categories: List[str] = None) -> Dict:
-        """Update database with latest papers from specified categories"""
+    def update_daily_papers(self, categories: List[str] = None, include_huggingface: bool = True) -> Dict:
+        """Update database with latest papers from arXiv and Hugging Face"""
         if categories is None:
             categories = ["cs.AI", "cs.LG", "cs.CL"]
         
         total_added = 0
         results = {}
+        all_papers = []
         
+        # Fetch from Hugging Face
+        if include_huggingface:
+            print("Fetching papers from Hugging Face...")
+            hf_papers = self.fetch_huggingface_papers(max_results=30)
+            all_papers.extend(hf_papers)
+            results['huggingface'] = {
+                'fetched': len(hf_papers),
+                'added': 0
+            }
+        
+        # Fetch from arXiv
         for category in categories:
-            print(f"Fetching papers from {category}...")
+            print(f"Fetching papers from arXiv ({category})...")
             papers = self.fetch_arxiv_papers(category=category, max_results=30)
-            added = self.add_papers_to_db(papers)
-            total_added += added
+            all_papers.extend(papers)
             results[category] = {
                 'fetched': len(papers),
-                'added': added
+                'added': 0
             }
+        
+        # Remove duplicates based on ID or title
+        seen = set()
+        unique_papers = []
+        for paper in all_papers:
+            identifier = paper.get('id') or paper.get('title')
+            if identifier and identifier not in seen:
+                seen.add(identifier)
+                unique_papers.append(paper)
+        
+        # Add to database
+        added = self.add_papers_to_db(unique_papers)
+        total_added = added
+        
+        # Update results
+        if include_huggingface and 'huggingface' in results:
+            hf_added = sum(1 for p in unique_papers if p.get('source') == 'HuggingFace')
+            results['huggingface']['added'] = hf_added
+        
+        for category in categories:
+            if category in results:
+                cat_added = sum(1 for p in unique_papers if category in p.get('categories', []))
+                results[category]['added'] = cat_added
         
         return {
             'success': True,
             'total_added': total_added,
+            'total_fetched': len(all_papers),
+            'unique_papers': len(unique_papers),
             'categories': results,
             'timestamp': datetime.datetime.now().isoformat()
         }
@@ -294,12 +430,12 @@ Answer:"""
     def get_stats(self) -> Dict:
         """Get database statistics"""
         try:
-            count = self.collection.count()
+            stats = self.index.describe_index_stats()
             return {
                 'success': True,
-                'total_papers': count,
-                'collection_name': COLLECTION_NAME,
-                'db_path': CHROMA_DB_PATH
+                'total_papers': stats['total_vector_count'],
+                'index_name': PINECONE_INDEX_NAME,
+                'dimension': PINECONE_DIMENSION
             }
         except Exception as e:
             return {
@@ -310,47 +446,38 @@ Answer:"""
     def clear_database(self):
         """Clear all papers from the database"""
         try:
-            self.chroma_client.delete_collection(name=COLLECTION_NAME)
-            self.collection = self.chroma_client.create_collection(
-                name=COLLECTION_NAME,
-                embedding_function=self.embedding_function
-            )
+            # Delete all vectors in the index
+            self.index.delete(delete_all=True)
             return {'success': True, 'message': 'Database cleared successfully'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
 
 # Convenience functions for easy import
-def initialize_rag(groq_api_key: str) -> ResearchPaperRAG:
-    """Initialize the RAG system"""
-    return ResearchPaperRAG(groq_api_key)
-
-
-def update_papers(rag_system: ResearchPaperRAG, categories: List[str] = None):
-    """Update papers in the database"""
-    return rag_system.update_daily_papers(categories)
-
-
-def ask_question(rag_system: ResearchPaperRAG, question: str, n_results: int = 5):
-    """Ask a question to the RAG system"""
-    return rag_system.answer_question(question, n_results)
+def initialize_rag(groq_api_key: str, pinecone_api_key: str) -> ResearchPaperRAGPinecone:
+    """Initialize the RAG system with Pinecone"""
+    return ResearchPaperRAGPinecone(groq_api_key, pinecone_api_key)
 
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize with your Groq API key
-    GROQ_API_KEY = "your_groq_api_key_here"
+    # Initialize with your API keys
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "your_groq_api_key_here")
+    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "your_pinecone_api_key_here")
     
-    rag = ResearchPaperRAG(GROQ_API_KEY)
+    rag = ResearchPaperRAGPinecone(GROQ_API_KEY, PINECONE_API_KEY)
     
     # Update database with latest papers
-    print("Updating database with latest papers...")
-    update_result = rag.update_daily_papers(categories=["cs.AI", "cs.LG", "cs.CL"])
+    print("\nUpdating database with latest papers...")
+    update_result = rag.update_daily_papers(
+        categories=["cs.AI", "cs.LG", "cs.CL"],
+        include_huggingface=True
+    )
     print(f"Added {update_result['total_added']} new papers")
     
     # Get stats
     stats = rag.get_stats()
-    print(f"Database has {stats['total_papers']} papers")
+    print(f"\nDatabase has {stats['total_papers']} papers")
     
     # Ask a question
     question = "What are the latest developments in large language models?"

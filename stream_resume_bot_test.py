@@ -16,11 +16,11 @@ import os
 
 # Import RAG system
 try:
-    from backend_rag import ResearchPaperRAG
+    from backend_rag_test import ResearchPaperRAGPinecone
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
-    print("Warning: backend_rag.py not found. RAG features will be disabled.")
+    print("Warning: backend_rag_test.py not found.")
 
 # ======================= Helper Functions =======================
 
@@ -58,17 +58,7 @@ def get_latest_news(category="general", country="us", page_size=100):
     return []
 
 def get_arxiv_papers(category="cs.AI", max_results=100, sort_by="submittedDate"):
-    """
-    Fetch latest research papers from arXiv API
-    
-    Categories:
-    - cs.AI: Artificial Intelligence
-    - cs.LG: Machine Learning
-    - cs.CL: Computation and Language (NLP)
-    - cs.CV: Computer Vision
-    - cs.NE: Neural and Evolutionary Computing
-    - stat.ML: Machine Learning (Statistics)
-    """
+    """Fetch latest research papers from arXiv API"""
     base_url = "http://export.arxiv.org/api/query?"
     search_query = f"cat:{category}"
     
@@ -98,7 +88,9 @@ def get_arxiv_papers(category="cs.AI", max_results=100, sort_by="submittedDate")
                     'updated': entry.find('{http://www.w3.org/2005/Atom}updated').text,
                     'pdf_url': '',
                     'arxiv_url': entry.find('{http://www.w3.org/2005/Atom}id').text,
-                    'categories': []
+                    'categories': [],
+                    'source': 'arXiv',
+                    'upvotes': 0
                 }
                 
                 # Get PDF link
@@ -117,6 +109,100 @@ def get_arxiv_papers(category="cs.AI", max_results=100, sort_by="submittedDate")
     except Exception as e:
         st.error(f"Error fetching arXiv papers: {e}")
     return []
+
+
+# --------------------------------------------------------
+# Function 1: Get curated daily papers from Hugging Face
+# --------------------------------------------------------
+def get_huggingface_papers(max_results=50):
+    """Fetch curated daily papers from Hugging Face"""
+    try:
+        url = "https://huggingface.co/api/daily_papers"
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            papers = []
+
+            for item in data[:max_results]:
+                arxiv_id = item.get('paper', {}).get('arxivId', '')
+                paper = {
+                    'id': arxiv_id,
+                    'title': item.get('paper', {}).get('title', 'No Title'),
+                    'summary': item.get('paper', {}).get('summary', 'No summary available.'),
+                    'authors': [author.get('name', '') for author in item.get('paper', {}).get('authors', [])],
+                    'published': item.get('publishedAt', ''),
+                    'arxiv_url': f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else '',
+                    'pdf_url': f"https://arxiv.org/pdf/{arxiv_id}.pdf" if arxiv_id else '',
+                    'categories': ['Trending on HF'],
+                    'source': 'HuggingFace',
+                    'upvotes': item.get('paper', {}).get('upvotes', 0),
+                    'num_comments': item.get('numComments', 0)
+                }
+                papers.append(paper)
+            
+            return papers
+
+        else:
+            st.error(f"Error fetching HF papers: {response.status_code}")
+            return []
+
+    except Exception as e:
+        st.error(f"Error fetching Hugging Face papers: {e}")
+        return []
+
+# --------------------------------------------------------
+# Function 2: Get latest papers from arXiv Atom feed
+# --------------------------------------------------------
+def get_arxiv_papers(category="cs.AI", max_results=50, sort_by=None):
+    """Fetch latest research papers from arXiv API or RSS feed"""
+    try:
+        # Construct the RSS feed URL using the selected category
+        feed_url = f"http://export.arxiv.org/rss/{category}"
+
+        response = requests.get(feed_url, timeout=30)
+        if response.status_code != 200:
+            st.error(f"Error fetching arXiv feed: {response.status_code}")
+            return []
+        
+        root = ET.fromstring(response.content)
+        papers = []
+
+        for entry in root.findall('{http://www.w3.org/2005/Atom}entry')[:max_results]:
+            paper = {
+                'title': entry.find('{http://www.w3.org/2005/Atom}title').text.strip(),
+                'summary': entry.find('{http://www.w3.org/2005/Atom}summary').text.strip(),
+                'authors': [
+                    author.find('{http://www.w3.org/2005/Atom}name').text
+                    for author in entry.findall('{http://www.w3.org/2005/Atom}author')
+                ],
+                'published': entry.find('{http://www.w3.org/2005/Atom}published').text,
+                'updated': entry.find('{http://www.w3.org/2005/Atom}updated').text,
+                'arxiv_url': entry.find('{http://www.w3.org/2005/Atom}id').text,
+                'pdf_url': '',
+                'categories': [],
+                'source': 'arXiv'
+            }
+
+            # Extract PDF link if present
+            for link in entry.findall('{http://www.w3.org/2005/Atom}link'):
+                if link.get('title') == 'pdf':
+                    paper['pdf_url'] = link.get('href')
+                    break
+
+            # Extract categories
+            for category_tag in entry.findall('{http://arxiv.org/schemas/atom}primary_category'):
+                paper['categories'].append(category_tag.get('term'))
+
+            papers.append(paper)
+
+        return papers
+
+    except Exception as e:
+        st.error(f"Error fetching arXiv papers: {e}")
+        return []
+
+
 
 def generate_thread_name_from_message(message):
     return message[:40] + "..." if len(message) > 40 else message
@@ -239,37 +325,55 @@ if "view_mode" not in st.session_state:
 # Initialize RAG system
 if "rag_system" not in st.session_state and RAG_AVAILABLE:
     try:
-        # Try to get Groq API key from multiple sources
+        # Get Groq API key (multiple sources)
         groq_key = None
-        
-        # 1. Try st.secrets first
         if hasattr(st, 'secrets') and "GROQ_API_KEY" in st.secrets:
             groq_key = st.secrets["GROQ_API_KEY"]
-            print("✅ Groq API key loaded from Streamlit secrets")
-        
-        # 2. Try environment variables
         elif "GROQ_API_KEY" in os.environ:
             groq_key = os.environ["GROQ_API_KEY"]
-            print("✅ Groq API key loaded from environment variables")
-        
-        # 3. Try .env file (if python-dotenv is installed)
         else:
             try:
                 from dotenv import load_dotenv
                 load_dotenv()
                 groq_key = os.getenv("GROQ_API_KEY")
-                if groq_key:
-                    print("✅ Groq API key loaded from .env file")
             except ImportError:
                 pass
         
-        if groq_key:
-            st.session_state.rag_system = ResearchPaperRAG(groq_key)
+        # Get Pinecone credentials (NEW - REQUIRED)
+        pinecone_key = None
+        pinecone_env = "us-east-1"  # Default
+        
+        if hasattr(st, 'secrets') and "PINECONE_API_KEY" in st.secrets:
+            pinecone_key = st.secrets["PINECONE_API_KEY"]
+            pinecone_env = st.secrets.get("PINECONE_ENVIRONMENT", "us-east-1")
+        elif "PINECONE_API_KEY" in os.environ:
+            pinecone_key = os.environ["PINECONE_API_KEY"]
+            pinecone_env = os.environ.get("PINECONE_ENVIRONMENT", "us-east-1")
+        else:
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+                pinecone_key = os.getenv("PINECONE_API_KEY")
+                pinecone_env = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
+            except ImportError:
+                pass
+        
+        # Initialize RAG if we have all required keys
+        if groq_key and pinecone_key:
+            st.session_state.rag_system = ResearchPaperRAGPinecone(
+                groq_api_key=groq_key,
+                pinecone_api_key=pinecone_key,
+                pinecone_environment=pinecone_env
+            )
             st.session_state.rag_initialized = True
-            print("✅ RAG system initialized successfully")
+            print("✅ RAG system initialized with Pinecone")
         else:
             st.session_state.rag_initialized = False
-            print("⚠️ No Groq API key found")
+            if not groq_key:
+                print("⚠️ No Groq API key found")
+            if not pinecone_key:
+                print("⚠️ No Pinecone API key found")
+    
     except Exception as e:
         st.session_state.rag_initialized = False
         print(f"❌ RAG initialization error: {e}")
@@ -337,32 +441,35 @@ with st.sidebar:
     # RAG Assistant button - Always show, with status indicator
     rag_button_label = "🤖 RAG Assistant"
     if RAG_AVAILABLE and st.session_state.get('rag_initialized', False):
-        rag_button_label = "🤖 RAG Assistant ✅"
+        rag_button_label = "🤖 RAG Assistant (Pinecone) ✅"
     elif RAG_AVAILABLE:
-        rag_button_label = "🤖 RAG Assistant ⚠️"
+        rag_button_label = "🤖 RAG Assistant (Pinecone) ⚠️"
     else:
         rag_button_label = "🤖 RAG Assistant ❌"
     
-    if st.button(rag_button_label, use_container_width=True, type="primary" if st.session_state.view_mode == "rag" else "secondary"):
+    if st.button(rag_button_label, use_container_width=True, 
+                 type="primary" if st.session_state.view_mode == "rag" else "secondary"):
         st.session_state.view_mode = "rag"
         st.rerun()
     
-    # Show RAG status info
+    # Show setup info if not configured
     if not RAG_AVAILABLE or not st.session_state.get('rag_initialized', False):
-        with st.expander("ℹ️ RAG Setup Info", expanded=False):
+        with st.expander("ℹ️ RAG Setup Info (Pinecone)", expanded=False):
             if not RAG_AVAILABLE:
-                st.warning("backend_rag.py not found")
+                st.warning("backend_rag_test.py not found")
+                st.code("pip install pinecone sentence-transformers groq")
             elif not st.session_state.get('rag_initialized', False):
-                st.warning("Groq API key not configured")
+                st.warning("Pinecone credentials not configured")
                 st.info("""
                 **Add to .env file:**
                 ```
-                GROQ_API_KEY=your_key_here
+                PINECONE_API_KEY=pcsk_your_key
+                PINECONE_ENVIRONMENT=us-east-1
+                GROQ_API_KEY=gsk_your_key
                 ```
-                Or set environment variable:
-                ```bash
-                export GROQ_API_KEY=your_key
-                ```
+                
+                **Get Pinecone key:**
+                https://app.pinecone.io/
                 """)
     
     st.divider()
@@ -652,14 +759,25 @@ elif st.session_state.view_mode == "news":
 
 elif st.session_state.view_mode == "research":
     st.title("📚 AI/ML Research Papers")
-    st.write("Latest research papers from arXiv - Stay ahead in GenAI & Machine Learning")
+    st.write("Latest research papers from arXiv & Hugging Face - Stay ahead in GenAI & Machine Learning")
     
     st.divider()
     
-    # Filters
-    col1, col2, col3 = st.columns([2, 2, 1])
+    # Source selector at the top
+    col_source, col_category, col_sort, col_refresh = st.columns([2, 2, 2, 1])
     
-    with col1:
+    with col_source:
+        paper_source = st.selectbox(
+            "📍 Select Source",
+            options=[
+                ("🌐 All Sources", "all"),
+                ("🤗 HuggingFace Only", "huggingface"),
+                ("📚 arXiv Only", "arxiv")
+            ],
+            format_func=lambda x: x[0]
+        )
+    
+    with col_category:
         paper_category = st.selectbox(
             "Select Research Area",
             options=[
@@ -676,136 +794,222 @@ elif st.session_state.view_mode == "research":
             format_func=lambda x: x[0]
         )
     
-    with col2:
+    with col_sort:
         sort_option = st.selectbox(
             "Sort By",
             options=[
                 ("📅 Latest First (Submitted)", "submittedDate"),
                 ("🔄 Recently Updated", "lastUpdatedDate"),
-                ("📈 Relevance", "relevance")
+                ("🔥 Most Popular", "relevance")
             ],
             format_func=lambda x: x[0]
         )
     
-    with col3:
-        if st.button("🔄 Refresh", use_container_width=True):
+    with col_refresh:
+        st.write("")  # Spacing
+        if st.button("🔄", use_container_width=True, help="Refresh papers"):
             if 'cached_papers' in st.session_state:
                 del st.session_state.cached_papers
             st.rerun()
     
-    # Number of papers to fetch
+    # Number of papers slider
     num_papers = st.slider("Number of papers to display", min_value=10, max_value=100, value=50, step=10)
     
     st.divider()
     
-    # Fetch papers (with caching for better performance)
-    cache_key = f"{paper_category[1]}_{sort_option[1]}_{num_papers}"
+    # Fetch papers based on source selection
+    cache_key = f"{paper_source[1]}_{paper_category[1]}_{sort_option[1]}_{num_papers}"
     
     if 'cached_papers' not in st.session_state or st.session_state.get('cache_key') != cache_key:
-        with st.spinner("🔍 Fetching latest research papers from arXiv..."):
-            papers = get_arxiv_papers(
-                category=paper_category[1],
-                max_results=num_papers,
-                sort_by=sort_option[1]
-            )
-            st.session_state.cached_papers = papers
+        with st.spinner("🔍 Fetching latest research papers..."):
+            all_papers = []
+            
+            # Fetch from HuggingFace
+            if paper_source[1] in ["all", "huggingface"]:
+                hf_papers = get_huggingface_papers(max_results=num_papers)
+                all_papers.extend(hf_papers)
+            
+            # Fetch from arXiv
+            if paper_source[1] in ["all", "arxiv"]:
+                arxiv_papers = get_arxiv_papers(
+                    category=paper_category[1],
+                    max_results=num_papers,
+                    sort_by=sort_option[1]
+                )
+                all_papers.extend(arxiv_papers)
+            
+            # Remove duplicates based on arxiv_id or title
+            seen = set()
+            unique_papers = []
+            for paper in all_papers:
+                identifier = paper.get('id', '') or paper.get('title', '')
+                if identifier and identifier not in seen:
+                    seen.add(identifier)
+                    unique_papers.append(paper)
+            
+            st.session_state.cached_papers = unique_papers
             st.session_state.cache_key = cache_key
     else:
-        papers = st.session_state.cached_papers
+        unique_papers = st.session_state.cached_papers
     
-    if papers:
-        st.success(f"✅ Found {len(papers)} research papers")
+    if unique_papers:
+        # Show statistics with source breakdown
+        hf_count = sum(1 for p in unique_papers if p.get('source') == 'HuggingFace')
+        arxiv_count = sum(1 for p in unique_papers if p.get('source') == 'arXiv')
+        
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        with col_stat1:
+            st.metric("📊 Total Papers", len(unique_papers))
+        with col_stat2:
+            st.metric("🤗 HuggingFace", hf_count)
+        with col_stat3:
+            st.metric("📚 arXiv", arxiv_count)
+        
         st.divider()
         
-        # Search/filter within results
+        # Search within results
         search_term = st.text_input("🔍 Search within results", placeholder="Enter keywords to filter papers...")
         
         if search_term:
             filtered_papers = [
-                p for p in papers 
+                p for p in unique_papers 
                 if search_term.lower() in p['title'].lower() 
                 or search_term.lower() in p['summary'].lower()
             ]
             st.info(f"Showing {len(filtered_papers)} papers matching '{search_term}'")
         else:
-            filtered_papers = papers
+            filtered_papers = unique_papers
         
         st.divider()
         
-        # Display papers
+        # Display papers with clear source indicators
         for idx, paper in enumerate(filtered_papers, 1):
-            with st.expander(f"**{idx}. {paper['title']}**", expanded=False):
-                # Metadata
-                col_meta1, col_meta2 = st.columns(2)
-                with col_meta1:
-                    try:
-                        pub_date = datetime.datetime.strptime(
-                            paper['published'][:10], 
-                            "%Y-%m-%d"
-                        ).strftime("%B %d, %Y")
-                        st.markdown(f"📅 **Published:** {pub_date}")
-                    except:
-                        st.markdown(f"📅 **Published:** {paper['published'][:10]}")
+            # Determine source and styling
+            is_hf = paper.get('source') == 'HuggingFace'
+            
+            # Create colored badge
+            if is_hf:
+                source_badge = "🤗 **HuggingFace**"
+                badge_color = "#FFD700"  # Gold
+                border_style = "border-left: 5px solid #FFD700;"
+            else:
+                source_badge = "📚 **arXiv**"
+                badge_color = "#4A90E2"  # Blue
+                border_style = "border-left: 5px solid #4A90E2;"
+            
+            # Paper container with custom styling
+            with st.container():
+                st.markdown(f"""
+                <div style='{border_style} padding-left: 15px; margin-bottom: 10px;'>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                with col_meta2:
-                    if paper['categories']:
-                        st.markdown(f"🏷️ **Category:** {', '.join(paper['categories'])}")
+                # Header row with source badge
+                col_title, col_source_badge = st.columns([5, 1])
+                with col_title:
+                    st.markdown(f"**{idx}. {paper['title']}**")
+                with col_source_badge:
+                    if is_hf:
+                        st.markdown("🤗 **HF**")
+                    else:
+                        st.markdown("📚 **arXiv**")
                 
-                # Authors
-                if paper['authors']:
-                    authors_text = ", ".join(paper['authors'][:5])
-                    if len(paper['authors']) > 5:
-                        authors_text += f" +{len(paper['authors']) - 5} more"
-                    st.markdown(f"👥 **Authors:** {authors_text}")
-                
-                st.divider()
-                
-                # Abstract/Summary
-                st.markdown("### 📄 Abstract")
-                st.markdown(paper['summary'])
-                
-                st.divider()
-                
-                # Action buttons
-                col_btn1, col_btn2, col_btn3 = st.columns(3)
-                
-                with col_btn1:
-                    if paper['pdf_url']:
+                with st.expander("📖 View Details", expanded=False):
+                    # Source information prominently displayed
+                    col_meta1, col_meta2, col_meta3 = st.columns(3)
+                    
+                    with col_meta1:
+                        st.markdown(f"**Source:** {source_badge}")
+                    
+                    with col_meta2:
+                        try:
+                            pub_date = datetime.datetime.strptime(
+                                paper['published'][:10], 
+                                "%Y-%m-%d"
+                            ).strftime("%B %d, %Y")
+                            st.markdown(f"📅 **Published:** {pub_date}")
+                        except:
+                            st.markdown(f"📅 **Published:** {paper['published'][:10]}")
+                    
+                    with col_meta3:
+                        if paper.get('categories'):
+                            cats = ', '.join(paper['categories'])
+                            st.markdown(f"🏷️ **Category:** {cats}")
+                    
+                    # HuggingFace specific metrics
+                    if is_hf:
+                        col_up, col_com = st.columns(2)
+                        with col_up:
+                            st.markdown(f"⬆️ **Upvotes:** {paper.get('upvotes', 0)}")
+                        with col_com:
+                            st.markdown(f"💬 **Comments:** {paper.get('num_comments', 0)}")
+                        
+                        st.info("🔥 **Trending on Hugging Face** - Curated by the community!")
+                    
+                    # Authors
+                    if paper['authors']:
+                        authors_text = ", ".join(paper['authors'][:5])
+                        if len(paper['authors']) > 5:
+                            authors_text += f" +{len(paper['authors']) - 5} more"
+                        st.markdown(f"👥 **Authors:** {authors_text}")
+                    
+                    st.divider()
+                    
+                    # Abstract/Summary
+                    st.markdown("### 📄 Abstract")
+                    st.markdown(paper['summary'])
+                    
+                    st.divider()
+                    
+                    # Action buttons
+                    col_btn1, col_btn2, col_btn3 = st.columns(3)
+                    
+                    with col_btn1:
+                        if paper.get('pdf_url'):
+                            st.link_button(
+                                "📥 Download PDF",
+                                paper['pdf_url'],
+                                use_container_width=True
+                            )
+                    
+                    with col_btn2:
                         st.link_button(
-                            "📥 Download PDF",
-                            paper['pdf_url'],
+                            "🔗 View on arXiv",
+                            paper['arxiv_url'],
                             use_container_width=True
                         )
+                    
+                    with col_btn3:
+                        citation = f"{', '.join(paper['authors'][:3])} et al. ({paper['published'][:4]}). {paper['title']}. arXiv preprint {paper.get('id', 'N/A')}."
+                        if st.button(f"📋 Copy Citation", key=f"cite_{idx}", use_container_width=True):
+                            st.code(citation, language=None)
+                    
+                    # Source-specific badges at bottom
+                    if is_hf:
+                        st.markdown("---")
+                        st.markdown("🤗 **Source:** Hugging Face Daily Papers | 🔗 [Visit HuggingFace](https://huggingface.co/papers)")
+                    else:
+                        st.markdown("---")
+                        st.markdown("📚 **Source:** arXiv.org | 🔗 [Visit arXiv](https://arxiv.org)")
                 
-                with col_btn2:
-                    st.link_button(
-                        "🔗 View on arXiv",
-                        paper['arxiv_url'],
-                        use_container_width=True
-                    )
-                
-                with col_btn3:
-                    # Copy citation button
-                    citation = f"{', '.join(paper['authors'][:3])} et al. ({paper['published'][:4]}). {paper['title']}. arXiv preprint {paper['arxiv_url'].split('/')[-1]}."
-                    if st.button(f"📋 Copy Citation", key=f"cite_{idx}", use_container_width=True):
-                        st.code(citation, language=None)
-                
-                # Add some spacing
                 st.markdown("<br>", unsafe_allow_html=True)
         
         # Pagination info
         if filtered_papers:
             st.divider()
-            st.info(f"📊 Displaying {len(filtered_papers)} of {len(papers)} papers")
+            st.info(f"""
+            📊 **Summary:** Displaying {len(filtered_papers)} of {len(unique_papers)} papers
+            - 🤗 HuggingFace: {hf_count} papers (Trending & Community Curated)
+            - 📚 arXiv: {arxiv_count} papers (Latest Research)
+            """)
     
     else:
         st.warning("⚠️ No research papers found")
         st.info("""
-        **Possible reasons:**
-        - Network connectivity issues
-        - arXiv API temporarily unavailable
-        
-        **Note:** arXiv is a free service and doesn't require an API key!
+        **Try:**
+        - Changing the source filter
+        - Selecting a different category
+        - Checking your internet connection
         """)
     
     # Back to chat button
@@ -817,32 +1021,18 @@ elif st.session_state.view_mode == "research":
 # ============================ RAG ASSISTANT VIEW ============================
 
 elif st.session_state.view_mode == "rag":
-    st.title("🤖 RAG Research Assistant")
-    st.write("Ask questions about AI/ML research papers - powered by your knowledge base")
+    st.title("🤖 RAG Research Assistant (Pinecone)")
+    st.write("Ask questions about AI/ML research papers - powered by Pinecone vector database")
     
     st.divider()
     
-    # Check if RAG is available and initialized
+    # Check if RAG is available
     if not RAG_AVAILABLE:
-        st.error("❌ RAG system not available. Please ensure `backend_rag.py` is in the same directory.")
-        st.info("Required packages: `pip install chromadb groq`")
-        if st.button("⬅️ Back to Chat", use_container_width=True):
-            st.session_state.view_mode = "chat"
-            st.rerun()
-        st.stop()
-    
-    if not st.session_state.rag_initialized:
-        st.error("❌ RAG system not initialized. Please add your GROQ_API_KEY to Streamlit secrets.")
+        st.error("❌ RAG system not available. Please ensure `backend_rag_test.py` is in the same directory.")
         st.info("""
-        **To enable RAG:**
-        1. Get your Groq API key from https://console.groq.com
-        2. Add it to `.streamlit/secrets.toml`:
-        ```
-        GROQ_API_KEY = "your_groq_api_key_here"
-        ```
-        3. Install required packages:
-        ```
-        pip install chromadb groq
+        **Required packages:**
+        ```bash
+        pip install pinecone sentence-transformers groq
         ```
         """)
         if st.button("⬅️ Back to Chat", use_container_width=True):
@@ -850,44 +1040,174 @@ elif st.session_state.view_mode == "rag":
             st.rerun()
         st.stop()
     
-    # RAG is available - show interface
+    if not st.session_state.rag_initialized:
+        st.error("❌ RAG system not initialized. Pinecone credentials required.")
+        
+        # Configuration UI
+        with st.expander("⚙️ Configure Pinecone Credentials", expanded=True):
+            st.markdown("### 🌲 Pinecone Setup")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                pinecone_key_input = st.text_input(
+                    "Pinecone API Key",
+                    type="password",
+                    value=os.getenv("PINECONE_API_KEY", ""),
+                    help="Get from https://app.pinecone.io/"
+                )
+            
+            with col2:
+                pinecone_env_input = st.selectbox(
+                    "Pinecone Environment",
+                    options=["us-east-1", "us-west-2", "eu-west-1", "gcp-starter"],
+                    index=0
+                )
+            
+            groq_key_input = st.text_input(
+                "Groq API Key",
+                type="password",
+                value=os.getenv("GROQ_API_KEY", ""),
+                help="Get from https://console.groq.com"
+            )
+            
+            if st.button("🔌 Initialize RAG System", use_container_width=True, type="primary"):
+                if pinecone_key_input and groq_key_input:
+                    try:
+                        with st.spinner("Connecting to Pinecone..."):
+                            from backend_rag_test import ResearchPaperRAGPinecone
+                            
+                            st.session_state.rag_system = ResearchPaperRAGPinecone(
+                                groq_api_key=groq_key_input,
+                                pinecone_api_key=pinecone_key_input,
+                                pinecone_environment=pinecone_env_input
+                            )
+                            st.session_state.rag_initialized = True
+                            st.success("✅ Connected to Pinecone successfully!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to initialize: {e}")
+                        st.info("Check your API keys and environment setting")
+                else:
+                    st.warning("Please provide both Pinecone and Groq API keys")
+        
+        st.info("""
+        **Setup Instructions:**
+        
+        1. Get Pinecone API Key: https://app.pinecone.io/
+        2. Get Groq API Key: https://console.groq.com
+        3. Add to `.env` file:
+        ```
+        PINECONE_API_KEY=pcsk_your_pinecone_key
+        PINECONE_ENVIRONMENT=us-east-1
+        GROQ_API_KEY=gsk_your_groq_key
+        ```
+        4. Restart the app
+        
+        **Free Tier:** Pinecone offers free tier with 100K vectors (enough for ~100K papers)
+        """)
+        
+        if st.button("⬅️ Back to Chat", use_container_width=True):
+            st.session_state.view_mode = "chat"
+            st.rerun()
+        st.stop()
+    
+    # RAG is available - continue with normal RAG UI
     rag = st.session_state.rag_system
     
     # Database management section
     with st.expander("⚙️ Database Management", expanded=False):
-        col1, col2, col3 = st.columns(3)
+        st.markdown("### 📊 Pinecone Database Statistics")
+        
+        # Get current stats
+        stats = rag.get_stats()
+        if stats['success']:
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                st.metric("📚 Total Papers", stats['total_papers'])
+            with col_s2:
+                st.metric("🌲 Vector DB", "Pinecone")
+            with col_s3:
+                st.metric("📐 Dimension", stats.get('dimension', 384))
+            
+            st.info(f"💾 Index: {stats.get('index_name', 'research-papers')} | Cloud-hosted")
+        else:
+            st.error("Could not fetch stats from Pinecone")
+        
+        st.divider()
+        st.markdown("### 🔄 Update Database")
+        
+        col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("🔄 Update Database", use_container_width=True):
-                with st.spinner("Fetching latest papers from arXiv..."):
-                    categories = st.multiselect(
-                        "Select categories to update:",
-                        ["cs.AI", "cs.LG", "cs.CL", "cs.CV", "cs.NE"],
-                        default=["cs.AI", "cs.LG", "cs.CL"]
-                    )
-                    if categories:
-                        result = rag.update_daily_papers(categories=categories)
-                        if result['success']:
-                            st.success(f"✅ Added {result['total_added']} new papers!")
-                            for cat, stats in result['categories'].items():
-                                st.info(f"{cat}: Fetched {stats['fetched']}, Added {stats['added']}")
-                        else:
-                            st.error("Failed to update database")
+            st.markdown("**📍 Select Sources:**")
+            include_hf = st.checkbox("🤗 HuggingFace Daily Papers", value=True, help="Trending papers curated by HF community")
+            include_arxiv = st.checkbox("📚 arXiv Papers", value=True, help="Latest papers from arXiv categories")
         
         with col2:
-            stats = rag.get_stats()
-            if stats['success']:
-                st.metric("Total Papers", stats['total_papers'])
+            if include_arxiv:
+                st.markdown("**🏷️ arXiv Categories:**")
+                categories = st.multiselect(
+                    "Select categories:",
+                    ["cs.AI", "cs.LG", "cs.CL", "cs.CV", "cs.NE"],
+                    default=["cs.AI", "cs.LG", "cs.CL"],
+                    label_visibility="collapsed"
+                )
             else:
-                st.error("Error getting stats")
+                categories = []
         
-        with col3:
+        if st.button("🔄 Update Database Now", use_container_width=True, type="primary"):
+            if not include_hf and not include_arxiv:
+                st.warning("⚠️ Please select at least one source!")
+            else:
+                with st.spinner("📡 Fetching and updating papers..."):
+                    result = rag.update_daily_papers(
+                        categories=categories if include_arxiv else [],
+                        include_huggingface=include_hf
+                    )
+                    
+                    if result.get('success'):
+                        st.success(f"✅ Update Complete! Papers stored in Pinecone")
+                        
+                        # Show detailed breakdown
+                        col_r1, col_r2, col_r3 = st.columns(3)
+                        with col_r1:
+                            st.metric("📥 Total Fetched", result.get('total_fetched', 0))
+                        with col_r2:
+                            st.metric("➕ New Added", result.get('total_added', 0))
+                        with col_r3:
+                            st.metric("🎯 Unique Papers", result.get('unique_papers', 0))
+                        
+                        # Show source breakdown
+                        st.markdown("**📊 Update Breakdown:**")
+                        for source, stats in result.get('categories', {}).items():
+                            if source == 'huggingface':
+                                emoji = "🤗"
+                                name = "HuggingFace"
+                            else:
+                                emoji = "📚"
+                                name = f"arXiv ({source})"
+                            
+                            st.info(f"{emoji} **{name}**: Fetched {stats.get('fetched', 0)}, Added {stats.get('added', 0)}")
+                        
+                        # Refresh stats
+                        st.rerun()
+                    else:
+                        st.error("Failed to update database")
+        
+        st.divider()
+        
+        # Danger zone
+        with st.expander("⚠️ Danger Zone", expanded=False):
+            st.warning("**Warning:** This will delete all papers from the database!")
             if st.button("🗑️ Clear Database", use_container_width=True):
-                if st.checkbox("Are you sure?"):
+                if st.checkbox("I understand this cannot be undone"):
                     result = rag.clear_database()
-                    if result['success']:
+                    if result.get("success"):
                         st.success("Database cleared!")
                         st.rerun()
+                    else:
+                        st.error(f"Error: {result.get('error')}")
     
     st.divider()
     
@@ -1103,3 +1423,18 @@ else:
                     st.divider()
     else:
         st.info("💡 No images generated yet. Enter a prompt above to get started!")
+
+def show_pinecone_status():
+    """Display Pinecone connection status"""
+    if st.session_state.get('rag_initialized', False):
+        rag = st.session_state.rag_system
+        try:
+            stats = rag.get_stats()
+            if stats['success']:
+                st.success(f"🌲 Connected to Pinecone | {stats['total_papers']} papers indexed")
+            else:
+                st.warning("⚠️ Pinecone connection issue")
+        except:
+            st.error("❌ Cannot connect to Pinecone")
+    else:
+        st.warning("⚠️ Pinecone not initialized")
