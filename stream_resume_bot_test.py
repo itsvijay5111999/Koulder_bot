@@ -16,11 +16,11 @@ import os
 
 # Import RAG system
 try:
-    from backend_rag_test import ResearchPaperRAGPinecone
+    from backend_rag import ResearchPaperRAGPinecone
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
-    print("Warning: backend_rag_test.py not found.")
+    print("Warning: backend_rag.py not found.")
 
 # ======================= Helper Functions =======================
 
