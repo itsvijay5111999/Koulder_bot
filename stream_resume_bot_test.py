@@ -456,7 +456,7 @@ with st.sidebar:
     if not RAG_AVAILABLE or not st.session_state.get('rag_initialized', False):
         with st.expander("ℹ️ RAG Setup Info (Pinecone)", expanded=False):
             if not RAG_AVAILABLE:
-                st.warning("backend_rag_test.py not found")
+                st.warning("backend_rag.py not found")
                 st.code("pip install pinecone sentence-transformers groq")
             elif not st.session_state.get('rag_initialized', False):
                 st.warning("Pinecone credentials not configured")
@@ -1028,7 +1028,7 @@ elif st.session_state.view_mode == "rag":
     
     # Check if RAG is available
     if not RAG_AVAILABLE:
-        st.error("❌ RAG system not available. Please ensure `backend_rag_test.py` is in the same directory.")
+        st.error("❌ RAG system not available. Please ensure `backend_rag.py` is in the same directory.")
         st.info("""
         **Required packages:**
         ```bash
@@ -1075,7 +1075,7 @@ elif st.session_state.view_mode == "rag":
                 if pinecone_key_input and groq_key_input:
                     try:
                         with st.spinner("Connecting to Pinecone..."):
-                            from backend_rag_test import ResearchPaperRAGPinecone
+                            from backend_rag import ResearchPaperRAGPinecone
                             
                             st.session_state.rag_system = ResearchPaperRAGPinecone(
                                 groq_api_key=groq_key_input,
