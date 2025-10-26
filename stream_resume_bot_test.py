@@ -1438,3 +1438,5 @@ def show_pinecone_status():
             st.error("❌ Cannot connect to Pinecone")
     else:
         st.warning("⚠️ Pinecone not initialized")
+
+# Show Pinecone status in sidebar if RAG view

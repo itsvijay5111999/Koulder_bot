@@ -489,3 +489,5 @@ if __name__ == "__main__":
         print(f"\nBased on {result['papers_used']} papers")
     else:
         print(f"Error: {result['answer']}")
+
+# Image generation tool
